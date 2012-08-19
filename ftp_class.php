@@ -1,20 +1,92 @@
 <?php
+/**
+ * PemFTP - A Ftp implementation in pure PHP
+ *
+ * @package PemFTP
+ * @since 2.5
+ *
+ * @version 1.0
+ * @copyright Alexey Dotsenko
+ * @author Alexey Dotsenko
+ * @link http://www.phpclasses.org/browse/package/1743.html Site
+ * @license LGPL License http://www.opensource.org/licenses/lgpl-license.html
+ */
+
+/**
+ * Defines the newline characters, if not defined already.
+ *
+ * This can be redefined.
+ *
+ * @since 2.5
+ * @var string
+ */
 if(!defined('CRLF')) define('CRLF',"\r\n");
+
+/**
+ * Sets whatever to autodetect ASCII mode.
+ *
+ * This can be redefined.
+ *
+ * @since 2.5
+ * @var int
+ */
 if(!defined("FTP_AUTOASCII")) define("FTP_AUTOASCII", -1);
+
+/**
+ *
+ * This can be redefined.
+ * @since 2.5
+ * @var int
+ */
 if(!defined("FTP_BINARY")) define("FTP_BINARY", 1);
+
+/**
+ *
+ * This can be redefined.
+ * @since 2.5
+ * @var int
+ */
 if(!defined("FTP_ASCII")) define("FTP_ASCII", 0);
-if(!defined('FTP_FORCE')) define('FTP_FORCE', TRUE);
+
+/**
+ * Whether to force FTP.
+ *
+ * This can be redefined.
+ *
+ * @since 2.5
+ * @var bool
+ */
+if(!defined('FTP_FORCE')) define('FTP_FORCE', true);
+
+/**
+ * @since 2.5
+ * @var string
+ */
 define('FTP_OS_Unix','u');
+
+/**
+ * @since 2.5
+ * @var string
+ */
 define('FTP_OS_Windows','w');
+
+/**
+ * @since 2.5
+ * @var string
+ */
 define('FTP_OS_Mac','m');
 
+/**
+ * PemFTP base class
+ *
+ */
 class ftp_base {
 	/* Public variables */
 	var $LocalEcho;
 	var $Verbose;
 	var $OS_local;
 	var $OS_remote;
-	
+
 	/* Private variables */
 	var $_lastaction;
 	var $_errors;
@@ -88,38 +160,69 @@ class ftp_base {
 // <!-- --------------------------------------------------------------------------------------- -->
 // <!--       Public functions                                                                  -->
 // <!-- --------------------------------------------------------------------------------------- -->
-	function parselisting($list) {
-//	Parses 1 line like:		"drwxrwx---  2 owner group 4096 Apr 23 14:57 text"
-		if(preg_match("/^([-ld])([rwxst-]+)\s+(\d+)\s+([^\s]+)\s+([^\s]+)\s+(\d+)\s+(\w{3})\s+(\d+)\s+([\:\d]+)\s+(.+)$/i", $list, $ret)) {
-			$v=array(
-				"type"	=> ($ret[1]=="-"?"f":$ret[1]),
-				"perms"	=> 0,
-				"inode"	=> $ret[3],
-				"owner"	=> $ret[4],
-				"group"	=> $ret[5],
-				"size"	=> $ret[6],
-				"date"	=> $ret[7]." ".$ret[8]." ".$ret[9],
-				"name"	=> $ret[10]
-			);
-			$bad=array("(?)");
-			if(in_array($v["owner"], $bad)) $v["owner"]=NULL;
-			if(in_array($v["group"], $bad)) $v["group"]=NULL;
-			$v["perms"]+=00400*(int)($ret[2]{0}=="r");
-			$v["perms"]+=00200*(int)($ret[2]{1}=="w");
-			$v["perms"]+=00100*(int)in_array($ret[2]{2}, array("x","s"));
-			$v["perms"]+=00040*(int)($ret[2]{3}=="r");
-			$v["perms"]+=00020*(int)($ret[2]{4}=="w");
-			$v["perms"]+=00010*(int)in_array($ret[2]{5}, array("x","s"));
-			$v["perms"]+=00004*(int)($ret[2]{6}=="r");
-			$v["perms"]+=00002*(int)($ret[2]{7}=="w");
-			$v["perms"]+=00001*(int)in_array($ret[2]{8}, array("x","t"));
-			$v["perms"]+=04000*(int)in_array($ret[2]{2}, array("S","s"));
-			$v["perms"]+=02000*(int)in_array($ret[2]{5}, array("S","s"));
-			$v["perms"]+=01000*(int)in_array($ret[2]{8}, array("T","t"));
-		} 
-		return $v;
+
+	function parselisting($line) {
+		$is_windows = ($this->OS_remote == FTP_OS_Windows);
+		if ($is_windows && preg_match("/([0-9]{2})-([0-9]{2})-([0-9]{2}) +([0-9]{2}):([0-9]{2})(AM|PM) +([0-9]+|<DIR>) +(.+)/",$line,$lucifer)) {
+			$b = array();
+			if ($lucifer[3]<70) { $lucifer[3]+=2000; } else { $lucifer[3]+=1900; } // 4digit year fix
+			$b['isdir'] = ($lucifer[7]=="<DIR>");
+			if ( $b['isdir'] )
+				$b['type'] = 'd';
+			else
+				$b['type'] = 'f';
+			$b['size'] = $lucifer[7];
+			$b['month'] = $lucifer[1];
+			$b['day'] = $lucifer[2];
+			$b['year'] = $lucifer[3];
+			$b['hour'] = $lucifer[4];
+			$b['minute'] = $lucifer[5];
+			$b['time'] = @mktime($lucifer[4]+(strcasecmp($lucifer[6],"PM")==0?12:0),$lucifer[5],0,$lucifer[1],$lucifer[2],$lucifer[3]);
+			$b['am/pm'] = $lucifer[6];
+			$b['name'] = $lucifer[8];
+		} else if (!$is_windows && $lucifer=preg_split("/[ ]/",$line,9,PREG_SPLIT_NO_EMPTY)) {
+			//echo $line."\n";
+			$lcount=count($lucifer);
+			if ($lcount<8) return '';
+			$b = array();
+			$b['isdir'] = $lucifer[0]{0} === "d";
+			$b['islink'] = $lucifer[0]{0} === "l";
+			if ( $b['isdir'] )
+				$b['type'] = 'd';
+			elseif ( $b['islink'] )
+				$b['type'] = 'l';
+			else
+				$b['type'] = 'f';
+			$b['perms'] = $lucifer[0];
+			$b['number'] = $lucifer[1];
+			$b['owner'] = $lucifer[2];
+			$b['group'] = $lucifer[3];
+			$b['size'] = $lucifer[4];
+			if ($lcount==8) {
+				sscanf($lucifer[5],"%d-%d-%d",$b['year'],$b['month'],$b['day']);
+				sscanf($lucifer[6],"%d:%d",$b['hour'],$b['minute']);
+				$b['time'] = @mktime($b['hour'],$b['minute'],0,$b['month'],$b['day'],$b['year']);
+				$b['name'] = $lucifer[7];
+			} else {
+				$b['month'] = $lucifer[5];
+				$b['day'] = $lucifer[6];
+				if (preg_match("/([0-9]{2}):([0-9]{2})/",$lucifer[7],$l2)) {
+					$b['year'] = date("Y");
+					$b['hour'] = $l2[1];
+					$b['minute'] = $l2[2];
+				} else {
+					$b['year'] = $lucifer[7];
+					$b['hour'] = 0;
+					$b['minute'] = 0;
+				}
+				$b['time'] = strtotime(sprintf("%d %s %d %02d:%02d",$b['day'],$b['month'],$b['year'],$b['hour'],$b['minute']));
+				$b['name'] = $lucifer[8];
+			}
+		}
+
+		return $b;
 	}
-	
+
 	function SendMSG($message = "", $crlf=true) {
 		if ($this->Verbose) {
 			echo $message.($crlf?CRLF:"");
@@ -175,7 +278,10 @@ class ftp_base {
 	        $dns=@gethostbyaddr($host);
 	        if(!$ip) $ip=$host;
 	        if(!$dns) $dns=$host;
-			if(ip2long($ip) === -1) {
+	        // Validate the IPAddress PHP4 returns -1 for invalid, PHP5 false
+	        // -1 === "255.255.255.255" which is the broadcast address which is also going to be invalid
+	        $ipaslong = ip2long($ip);
+			if ( ($ipaslong == false) || ($ipaslong === -1) ) {
 				$this->SendMSG("Wrong host name/address \"".$host."\"");
 				return FALSE;
 			}
@@ -274,7 +380,7 @@ class ftp_base {
 	function pwd() {
 		if(!$this->_exec("PWD", "pwd")) return FALSE;
 		if(!$this->_checkCode()) return FALSE;
-		return ereg_replace("^[0-9]{3} \"(.+)\" .+".CRLF, "\\1", $this->_message);
+		return ereg_replace("^[0-9]{3} \"(.+)\".+", "\\1", $this->_message);
 	}
 
 	function cdup() {
@@ -364,7 +470,7 @@ class ftp_base {
 	}
 
 	function chmod($pathname, $mode) {
-		if(!$this->site("CHMOD ".decoct($mode)." ".$pathname, "chmod")) return FALSE;
+		if(!$this->site( sprintf('CHMOD %o %s', $mode, $pathname), "chmod")) return FALSE;
 		return TRUE;
 	}
 
@@ -385,8 +491,7 @@ class ftp_base {
 	function features() {
 		if(!$this->_exec("FEAT", "features")) return FALSE;
 		if(!$this->_checkCode()) return FALSE;
-		$f=array_slice(preg_split("/[".CRLF."]+/", $this->_message, -1, PREG_SPLIT_NO_EMPTY), 1, -1);
-		array_walk($f, create_function('&$a', '$a=preg_replace("/[0-9]{3}[\s-]+/", "", trim($a));'));
+		$f=preg_split("/[".CRLF."]+/", preg_replace("/[0-9]{3}[ -].*[".CRLF."]+/", "", $this->_message), -1, PREG_SPLIT_NO_EMPTY);
 		$this->_features=array();
 		foreach($f as $k=>$v) {
 			$v=explode(" ", trim($v));
@@ -417,6 +522,30 @@ class ftp_base {
 		if($exists) $this->SendMSG("Remote file ".$pathname." exists");
 		else $this->SendMSG("Remote file ".$pathname." does not exist");
 		return $exists;
+	}
+
+	function fget($fp, $remotefile,$rest=0) {
+		if($this->_can_restore and $rest!=0) fseek($fp, $rest);
+		$pi=pathinfo($remotefile);
+		if($this->_type==FTP_ASCII or ($this->_type==FTP_AUTOASCII and in_array(strtoupper($pi["extension"]), $this->AutoAsciiExt))) $mode=FTP_ASCII;
+		else $mode=FTP_BINARY;
+		if(!$this->_data_prepare($mode)) {
+			return FALSE;
+		}
+		if($this->_can_restore and $rest!=0) $this->restore($rest);
+		if(!$this->_exec("RETR ".$remotefile, "get")) {
+			$this->_data_close();
+			return FALSE;
+		}
+		if(!$this->_checkCode()) {
+			$this->_data_close();
+			return FALSE;
+		}
+		$out=$this->_data_read($mode, $fp);
+		$this->_data_close();
+		if(!$this->_readmsg()) return FALSE;
+		if(!$this->_checkCode()) return FALSE;
+		return $out;
 	}
 
 	function get($remotefile, $localfile=NULL, $rest=0) {
@@ -454,13 +583,38 @@ class ftp_base {
 		return $out;
 	}
 
+	function fput($remotefile, $fp) {
+		if($this->_can_restore and $rest!=0) fseek($fp, $rest);
+		$pi=pathinfo($remotefile);
+		if($this->_type==FTP_ASCII or ($this->_type==FTP_AUTOASCII and in_array(strtoupper($pi["extension"]), $this->AutoAsciiExt))) $mode=FTP_ASCII;
+		else $mode=FTP_BINARY;
+		if(!$this->_data_prepare($mode)) {
+			return FALSE;
+		}
+		if($this->_can_restore and $rest!=0) $this->restore($rest);
+		if(!$this->_exec("STOR ".$remotefile, "put")) {
+			$this->_data_close();
+			return FALSE;
+		}
+		if(!$this->_checkCode()) {
+			$this->_data_close();
+			return FALSE;
+		}
+		$ret=$this->_data_write($mode, $fp);
+		$this->_data_close();
+		if(!$this->_readmsg()) return FALSE;
+		if(!$this->_checkCode()) return FALSE;
+		return $ret;
+	}
+
 	function put($localfile, $remotefile=NULL, $rest=0) {
 		if(is_null($remotefile)) $remotefile=$localfile;
-		if (!@file_exists($localfile)) {
+		if (!file_exists($localfile)) {
 			$this->PushError("put","can't open local file", "No such file or directory \"".$localfile."\"");
 			return FALSE;
 		}
 		$fp = @fopen($localfile, "r");
+
 		if (!$fp) {
 			$this->PushError("put","can't open local file", "Cannot read file \"".$localfile."\"");
 			return FALSE;
@@ -522,7 +676,7 @@ class ftp_base {
 			}
 		}
 		return $ret;
-		
+
 	}
 
 	function mget($remote, $local=".", $continious=false) {
@@ -570,14 +724,17 @@ class ftp_base {
 			$this->PushError("mdel","can't read remote folder list", "Can't read remote folder \"".$remote."\" contents");
 			return false;
 		}
-	
+
 		foreach($list as $k=>$v) {
 			$list[$k]=$this->parselisting($v);
 			if($list[$k]["name"]=="." or $list[$k]["name"]=="..") unset($list[$k]);
 		}
 		$ret=true;
-	
+
 		foreach($list as $el) {
+			if ( empty($el) )
+				continue;
+
 			if($el["type"]=="d") {
 				if(!$this->mdel($remote."/".$el["name"], $continious)) {
 					$ret=false;
@@ -591,7 +748,7 @@ class ftp_base {
 				}
 			}
 		}
-	
+
 		if(!$this->rmdir($remote)) {
 			$this->PushError("mdel", "can't delete folder", "Can't delete remote folder \"".$remote."/".$el["name"]."\"");
 			$ret=false;
@@ -665,6 +822,28 @@ class ftp_base {
 			eregi($pattern,$probe)
 		);
 	}
+
+	function dirlist($remote) {
+		$list=$this->rawlist($remote, "-la");
+		if($list===false) {
+			$this->PushError("dirlist","can't read remote folder list", "Can't read remote folder \"".$remote."\" contents");
+			return false;
+		}
+
+		$dirlist = array();
+		foreach($list as $k=>$v) {
+			$entry=$this->parselisting($v);
+			if ( empty($entry) )
+				continue;
+
+			if($entry["name"]=="." or $entry["name"]=="..")
+				continue;
+
+			$dirlist[$entry['name']] = $entry;
+		}
+
+		return $dirlist;
+	}
 // <!-- --------------------------------------------------------------------------------------- -->
 // <!--       Private functions                                                                 -->
 // <!-- --------------------------------------------------------------------------------------- -->
@@ -698,7 +877,7 @@ class ftp_base {
 // <!-- --------------------------------------------------------------------------------------- -->
 // <!-- Partie : gestion des erreurs                                                            -->
 // <!-- --------------------------------------------------------------------------------------- -->
-// Génère une erreur pour traitement externe à la classe
+// Gnre une erreur pour traitement externe  la classe
 	function PushError($fctname,$msg,$desc=false){
 		$error=array();
 		$error['time']=time();
@@ -709,18 +888,20 @@ class ftp_base {
 		$this->SendMSG($fctname.': '.$msg.$tmp);
 		return(array_push($this->_error_array,$error));
 	}
-	
-// Récupère une erreur externe
+
+// Rcupre une erreur externe
 	function PopError(){
 		if(count($this->_error_array)) return(array_pop($this->_error_array));
 			else return(false);
 	}
 }
 
-$mod_sockets=TRUE;
-if (!extension_loaded('sockets')) {
-	$prefix = (PHP_SHLIB_SUFFIX == 'dll') ? 'php_' : '';
-	if(!@dl($prefix . 'sockets.' . PHP_SHLIB_SUFFIX)) $mod_sockets=FALSE;
+$mod_sockets = extension_loaded( 'sockets' );
+if ( ! $mod_sockets && function_exists( 'dl' ) && is_callable( 'dl' ) ) {
+	$prefix = ( PHP_SHLIB_SUFFIX == 'dll' ) ? 'php_' : '';
+	@dl( $prefix . 'sockets.' . PHP_SHLIB_SUFFIX );
+	$mod_sockets = extension_loaded( 'sockets' );
 }
-require_once "ftp_class_".($mod_sockets?"sockets":"pure").".php";
+
+require_once "ftp_class_" . ( $mod_sockets ? "sockets" : "pure" ) . ".php";
 ?>
